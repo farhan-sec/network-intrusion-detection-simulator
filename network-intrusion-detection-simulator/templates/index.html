@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NIDS Dashboard</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+
+<header>
+    Network Intrusion Detection System (Simulation)
+</header>
+
+<div class="container">
+
+    <!-- ALERTS TABLE -->
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>IP</th>
+                <th>Type</th>
+                <th>Detail</th>
+            </tr>
+        </thead>
+
+        <tbody id="alert-body"></tbody>
+    </table>
+
+    <!-- DEVICE PANEL -->
+    <div id="device-panel">
+        <h2>Devices</h2>
+        <ul id="device-list"></ul>
+    </div>
+
+</div>
+
+<script>
+    const socket = io();
+
+    // ---------- ALERT CLASSIFIER ----------
+    function getAlertClass(type) {
+        if (type.includes("SYN_FLOOD") || type.includes("PORT_SCAN")) {
+            return "alert-warning";
+        }
+        if (type.includes("SQL") || type.includes("XSS") || type.includes("BRUTE_FORCE")) {
+            return "alert-danger";
+        }
+        return "";
+    }
+
+    // ---------- ADD ALERT ----------
+    function addAlert(alert) {
+        const tbody = document.getElementById("alert-body");
+
+        const row = document.createElement("tr");
+
+        row.innerHTML = `
+            <td>${alert.timestamp ? alert.timestamp : new Date().toLocaleTimeString()}</td>
+            <td>${alert.src_ip}</td>
+            <td class="${getAlertClass(alert.type)}">${alert.type}</td>
+            <td>${alert.detail}</td>
+        `;
+
+        tbody.prepend(row);
+
+        // keep last 20 alerts
+        if (tbody.children.length > 20) {
+            tbody.removeChild(tbody.lastChild);
+        }
+    }
+
+    // ---------- UPDATE DEVICES ----------
+    function updateDevices(devices) {
+        const list = document.getElementById("device-list");
+        list.innerHTML = "";
+
+        devices.forEach(device => {
+            const li = document.createElement("li");
+            li.textContent = `${device.ip} (last seen: ${device.last_seen})`;
+            list.appendChild(li);
+        });
+    }
+
+    // ---------- SOCKET EVENTS ----------
+    socket.on("connect", () => {
+        console.log("Connected to IDS dashboard");
+    });
+
+    socket.on("load_alerts", (data) => {
+        data.forEach(addAlert);
+    });
+
+    socket.on("display_alert", (data) => {
+        addAlert(data);
+    });
+
+    socket.on("devices_list", (data) => {
+        updateDevices(data);
+    });
+
+    // request device updates periodically
+    setInterval(() => {
+        socket.emit("request_devices");
+    }, 5000);
+
+</script>
+
+</body>
+</html>
