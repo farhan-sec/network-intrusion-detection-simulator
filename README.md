@@ -1,202 +1,91 @@
-# 🌐 Network Intrusion Detection Simulator
+# 🕵️ Network Intrusion Detection System (Simulator)
 
-> Real-time network monitoring and threat detection system with live web dashboard.
+A real-time network intrusion detection dashboard. Watch simulated (or genuinely sniffed) network attacks — port scans, SYN floods, brute-force attempts, and suspicious payloads — appear live on a web dashboard.
 
-## What Problem Does This Solve?
+## ✨ Features
 
-Network security teams need to detect threats in real-time. But most intrusion detection systems (IDS) show raw logs and confusing alerts.
+- **Live dashboard** (Flask + Socket.IO) showing alerts and known devices in real time
+- **Two data sources**, runnable independently or together:
+  - `simulator.py` — safe, synthetic demo traffic (no special privileges needed)
+  - `detector.py` — real packet capture via Scapy (needs admin/root)
+- **Detection rules** (`detection_rules.py`) now actually drive detection logic:
+  - Port scan detection
+  - SYN flood / DDoS detection
+  - **Brute-force detection** (new) — flags repeated connection attempts to common auth ports (SSH, RDP, FTP, DB ports, ...)
+  - **Suspicious payload detection** (new) — scans raw TCP payloads for markers like `DROP TABLE`, `<script>`, `../../../`
+- **Severity-aware UI** — color-coded rows and a live stats bar (Critical / High / Medium / Low counts)
+- **REST API** — `/api/alerts`, `/api/devices`, `/api/stats` for pulling data into other tools
 
-**This tool shows you:**
-- What's happening on your network *right now*
-- When something suspicious occurs *immediately*
-- Why it's suspicious (not just an alert code)
+## 🐛 Fixed in this update
 
-It's built for learning how real IDS systems work, and for seeing threats the way security professionals see them.
+- **Alerts never reached the dashboard (architecture bug)** — `detector.py` and `simulator.py` used to do `from server import receive_new_alert`, which re-imports and re-runs `server.py` inside their *own* process. That creates a second, disconnected Flask/SocketIO app — any alert they "emitted" vanished into an app nobody was looking at. They now connect to the running dashboard as genuine **Socket.IO clients** and emit a `submit_alert` event over the network, exactly like a real remote sensor would.
+- **XSS in the dashboard** — alert fields (`src_ip`, `type`, `detail`) were inserted via `innerHTML` template strings with no escaping. Since these values originate from network traffic, an attacker could embed HTML/JS that would execute in the dashboard. Rows are now built with `textContent`.
+- **`detection_rules.py` was dead code with inconsistent duplicates** — `detector.py` hardcoded its own thresholds that didn't match the numbers declared in `detection_rules.py`. There is now a single source of truth.
+- **Two rules were declared but never implemented** — `brute_force` and `suspicious_payloads` existed in the config but had no matching detection logic anywhere. Both are now implemented.
+- **SQLite locking under concurrent writes** — `server.py`, `detector.py`, and `simulator.py` can all write to `alerts.db` at once. The database connection now uses WAL mode and a busy timeout instead of the default (which throws "database is locked" under load).
 
----
-
-## Features
-
-✨ **Real-Time Network Analysis**
-- Captures and analyzes live packet data
-- Detects suspicious patterns and anomalies
-- Classifies threat types automatically
-
-✨ **Live Web Dashboard**
-- See network events as they happen
-- Filter by threat level, type, source
-- Visual representation of network activity
-
-✨ **Event-Based Alerting**
-- Alerts trigger when threats are detected
-- Not just alarms—actionable intelligence
-- Understand what triggered each alert
-
-✨ **Packet Analysis**
-- Deep inspection of network protocols
-- Identifies attack signatures
-- Tracks connections and flows
-
----
-
-## Getting Started
-
-### Installation
+## 📦 Installation
 
 ```bash
 git clone https://github.com/farhan-sec/network-intrusion-detection-simulator.git
 cd network-intrusion-detection-simulator
-
 pip install -r requirements.txt
-python app.py
 ```
 
-### Running
+## 🚀 Usage
+
+**1. Start the dashboard:**
 
 ```bash
-# Start the IDS
-python ids.py
-
-# In another terminal, start the web dashboard
-python dashboard.py
-
-# Open browser to http://localhost:5000
+python server.py
 ```
 
----
+Open **http://localhost:5000** in your browser.
 
-## How It Works
+**2. Feed it data** — pick one (or run both):
 
-```
-Network Traffic
-    ↓
-Packet Capture (Scapy)
-    ↓
-Protocol Analysis
-    ↓
-Pattern Matching & Anomaly Detection
-    ↓
-Threat Classification
-    ↓
-Web Dashboard (Real-time visualization)
+```bash
+# Safe synthetic demo data, no special privileges required
+python simulator.py
+
+# Real packet capture (needs admin/root)
+sudo python detector.py          # Linux/macOS
+python detector.py               # Windows, run terminal as Administrator
 ```
 
----
+**3. (Optional) Pull data programmatically:**
 
-## Detection Capabilities
-
-The system detects:
-
-- **Port Scanning** - Multiple connection attempts to different ports
-- **Brute Force Attempts** - Repeated failed authentication
-- **Unusual Protocols** - Unexpected services on unusual ports
-- **DDoS Patterns** - Traffic spikes from single source
-- **Malicious Payloads** - Known attack signatures
-- **Reconnaissance** - Probing and information gathering
-
----
-
-## Example Output
-
-```
-[ALERT] Port Scan Detected
-Source: 192.168.1.50
-Target Ports: 22, 80, 443, 3306, 5432
-Threat Level: MEDIUM
-Details: Sequential port connections suggest reconnaissance activity
+```bash
+curl http://localhost:5000/api/alerts?limit=10
+curl http://localhost:5000/api/devices
+curl http://localhost:5000/api/stats
 ```
 
----
+## 🗂️ Project structure
 
-## Technical Architecture
+```
+network-intrusion-detection-simulator/
+├── server.py            # Flask + Socket.IO dashboard, single source of truth
+├── detector.py          # Live packet sniffer (Socket.IO client)
+├── simulator.py         # Synthetic demo traffic generator (Socket.IO client)
+├── models.py            # SQLite persistence (alerts, devices)
+├── detection_rules.py   # Thresholds/severities used by detector.py
+├── requirements.txt
+├── static/style.css
+└── templates/index.html
+```
 
-**Components:**
+## 🧭 Roadmap
 
-1. **Packet Sniffer** (Scapy)
-   - Captures network packets
-   - Extracts protocols, ports, payloads
+- [ ] Configurable alert retention / auto-purge (per `ALERT_CONFIG["retention_days"]`)
+- [ ] PCAP export for flagged traffic (per `ALERT_CONFIG["generate_pcap"]`)
+- [ ] Per-IP block-list suggestions after repeated CRITICAL alerts
+- [ ] WebSocket auth so the dashboard isn't wide open on shared networks
 
-2. **Analysis Engine**
-   - Applies detection rules
-   - Identifies anomalies
-   - Classifies threats
+## ⚠️ Disclaimer
 
-3. **Web Dashboard** (Flask + Socket.IO)
-   - Real-time event streaming
-   - Historical analysis
-   - Threat visualization
+`detector.py` performs real, passive packet sniffing on the interface it's run on. Only run it on networks you own or have explicit permission to monitor.
 
-4. **Alert System**
-   - Event-driven notifications
-   - Severity classification
-   - Actionable intelligence
+## 📄 License
 
----
-
-## What I Learned
-
-**About Network Security:**
-- Understanding packet structure is key to threat detection
-- Real attacks often look like innocent traffic at first glance
-- False positives are the biggest challenge in IDS work
-
-**About System Design:**
-- Real-time processing needs efficient filtering
-- Live dashboards are complex but essential
-- Security tools need explainability (why is this an alert?)
-
-**About Python & Networking:**
-- Scapy is incredibly powerful for packet manipulation
-- Socket.IO makes real-time dashboards possible
-- Threat detection is as much art as science
-
----
-
-## Limitations & Future Work
-
-**Current Limitations:**
-- Signature-based detection (not machine learning... yet)
-- Limited to local network capture
-- Requires root/admin privileges
-
-**Planned Improvements:**
-- Machine learning for anomaly detection
-- Integration with threat intelligence feeds
-- Support for encrypted traffic analysis
-- Distributed monitoring for larger networks
-
----
-
-## Use Cases
-
-- **Learning** - Understand how IDS systems actually work
-- **Security Practice** - Test your threat detection skills
-- **Lab Environment** - Simulate network attacks safely
-- **Interview Prep** - Learn IDS concepts before job interviews
-
----
-
-## Technical Stack
-
-- **Language:** Python 3.7+
-- **Packet Analysis:** Scapy
-- **Web Framework:** Flask
-- **Real-time Communication:** Socket.IO
-- **Database:** SQLite (for event logging)
-
----
-
-## License
-
-MIT - Use and modify freely
-
----
-
-## Questions?
-
-- 📧 Email: qitpo01official@gmail.com
-- 🔗 LinkedIn: [Farhan Ali Khan](https://linkedin.com/in/farhan-ali-khan-14b4872b5)
-
----
-
-Built for people learning how to protect networks.
+MIT

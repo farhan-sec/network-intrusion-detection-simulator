@@ -1,4 +1,7 @@
 # Advanced detection rules for network intrusion detection
+#
+# These values are the single source of truth for detector.py's thresholds
+# (previously detector.py hardcoded its own, inconsistent numbers here).
 
 DETECTION_RULES = {
     "port_scan": {

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NIDS Dashboard</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+
+<header>
+    Network Intrusion Detection System (Simulation)
+</header>
+
+<div id="stats-bar" class="stats-bar">
+    <div class="stat-pill" id="stat-total">Total: 0</div>
+    <div class="stat-pill severity-CRITICAL" id="stat-critical">Critical: 0</div>
+    <div class="stat-pill severity-HIGH" id="stat-high">High: 0</div>
+    <div class="stat-pill severity-MEDIUM" id="stat-medium">Medium: 0</div>
+    <div class="stat-pill severity-LOW" id="stat-low">Low: 0</div>
+    <a class="stat-pill api-link" href="/api/alerts" target="_blank" rel="noopener">API: /api/alerts</a>
+</div>
+
+<div class="container">
+
+    <!-- ALERTS TABLE -->
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>IP</th>
+                <th>Type</th>
+                <th>Severity</th>
+                <th>Detail</th>
+            </tr>
+        </thead>
+
+        <tbody id="alert-body"></tbody>
+    </table>
+
+    <!-- DEVICE PANEL -->
+    <div id="device-panel">
+        <h2>Devices</h2>
+        <ul id="device-list"></ul>
+    </div>
+
+</div>
+
+<script>
+    const socket = io();
+
+    // ---------- SEVERITY CLASSIFIER ----------
+    // BUGFIX: previously this guessed a display class from the alert TYPE
+    // string (type.includes("SQL") etc.), which silently fell through to
+    // "no styling" for any type it didn't recognize (e.g. the
+    // BRUTE_FORCE / SUSPICIOUS_PAYLOAD types the detector now sends).
+    // The backend now sends an explicit "severity" field, so the frontend
+    // just maps that directly instead of guessing from free-text.
+    function severityClass(severity) {
+        switch ((severity || "").toUpperCase()) {
+            case "CRITICAL": return "severity-CRITICAL";
+            case "HIGH": return "severity-HIGH";
+            case "MEDIUM": return "severity-MEDIUM";
+            case "LOW": return "severity-LOW";
+            default: return "";
+        }
+    }
+
+    // ---------- ADD ALERT ----------
+    // BUGFIX (XSS): this used to build the row with innerHTML and drop
+    // alert.src_ip / alert.type / alert.detail straight into the markup
+    // unescaped. Any of those fields (all attacker-influenceable, since
+    // they originate from network traffic) could contain HTML/JS that
+    // would then execute in the dashboard. Every value is now inserted
+    // via textContent, which never interprets its input as markup.
+    function addAlert(alert) {
+        const tbody = document.getElementById("alert-body");
+
+        const row = document.createElement("tr");
+        row.className = severityClass(alert.severity);
+
+        const cells = [
+            alert.timestamp ? alert.timestamp : new Date().toLocaleTimeString(),
+            alert.src_ip,
+            alert.type,
+            alert.severity || "-",
+            alert.detail,
+        ];
+
+        for (const value of cells) {
+            const td = document.createElement("td");
+            td.textContent = value;
+            row.appendChild(td);
+        }
+
+        tbody.prepend(row);
+
+        // keep last 20 alerts
+        if (tbody.children.length > 20) {
+            tbody.removeChild(tbody.lastChild);
+        }
+    }
+
+    // ---------- UPDATE DEVICES ----------
+    function updateDevices(devices) {
+        const list = document.getElementById("device-list");
+        list.innerHTML = "";
+
+        devices.forEach(device => {
+            const li = document.createElement("li");
+            // textContent, not innerHTML/template strings - same XSS fix as addAlert()
+            li.textContent = `${device.ip} (last seen: ${device.last_seen}, alerts: ${device.alert_count ?? 0})`;
+            list.appendChild(li);
+        });
+    }
+
+    // ---------- UPDATE STATS BAR ----------
+    function updateStats(stats) {
+        const total = Object.values(stats).reduce((sum, n) => sum + n, 0);
+        document.getElementById("stat-total").textContent = `Total: ${total}`;
+        document.getElementById("stat-critical").textContent = `Critical: ${stats.CRITICAL || 0}`;
+        document.getElementById("stat-high").textContent = `High: ${stats.HIGH || 0}`;
+        document.getElementById("stat-medium").textContent = `Medium: ${stats.MEDIUM || 0}`;
+        document.getElementById("stat-low").textContent = `Low: ${stats.LOW || 0}`;
+    }
+
+    // ---------- SOCKET EVENTS ----------
+    socket.on("connect", () => {
+        console.log("Connected to IDS dashboard");
+    });
+
+    socket.on("load_alerts", (data) => {
+        data.forEach(addAlert);
+    });
+
+    socket.on("display_alert", (data) => {
+        addAlert(data);
+    });
+
+    socket.on("devices_list", (data) => {
+        updateDevices(data);
+    });
+
+    socket.on("stats_update", (data) => {
+        updateStats(data);
+    });
+
+    // request device updates periodically
+    setInterval(() => {
+        socket.emit("request_devices");
+    }, 5000);
+
+</script>
+
+</body>
+</html>
